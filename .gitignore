@@ -1,0 +1,6 @@
+.venv
+.vscode
+audio_cache
+docs
+logs
+models
