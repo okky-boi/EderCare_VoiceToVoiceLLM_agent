@@ -120,8 +120,8 @@ class MochiAPI:
         print("\n🎤 Loading STT Model...")
         self.stt = STTService(
             model_size="base",
-            device="cuda",
-            compute_type="float16",
+            device="cpu",  # Ganti dari "cuda" ke "cpu"
+            compute_type="int8",  # Ganti dari "float16" ke "int8" (lebih cepat di CPU)
             language="id"
         ).load()
         
