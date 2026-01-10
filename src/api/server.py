@@ -12,10 +12,11 @@ from typing import Optional
 from datetime import datetime
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import io
 
 # Import Mochi components
 import sys
@@ -156,6 +157,8 @@ class MochiAPI:
         caregiver = self.caregiver_name
         name = self.preferred_name
         
+        print(f"🔧 Function Call: {function}, Args: {args}")
+        
         if function == "alert_caregiver":
             return f"Saya SEGERA menghubungi {caregiver}! Tetap tenang ya {name}, bantuan akan segera datang."
         
@@ -185,6 +188,7 @@ class MochiAPI:
             else:
                 return f"Saya sudah memberitahu {caregiver}. Beliau akan segera membantu {name}{urgency_text}."
         
+        # Default fallback jika function tidak dikenal
         return f"Baik {name}, saya akan sampaikan ke {caregiver}."
     
     def _clean_for_tts(self, text: str) -> str:
@@ -227,13 +231,20 @@ class MochiAPI:
             max_tokens=256
         )
         
+        print(f"🤖 Raw LLM Response: {llm_response}")
+        print(f"🤖 Response Type: {type(llm_response)}")
+        
         # Parse response
         response_type = "conversation"
         function_call = None
+        message = ""
         
-        if llm_response.get("function_call"):
+        # Check if response contains function_call (dict format)
+        if isinstance(llm_response, dict) and llm_response.get("function_call"):
             func_name = llm_response["function_call"]["name"]
             func_args = llm_response["function_call"]["arguments"]
+            
+            print(f"📞 Function Call Detected (dict): {func_name}")
             
             message = self._get_confirmation_message(func_name, func_args)
             response_type = "action"
@@ -244,10 +255,45 @@ class MochiAPI:
             
             # Dispatch action
             self.dispatcher.dispatch(function_call)
-        else:
+        
+        # Check if response is string dan mengandung function call notation
+        elif isinstance(llm_response, str):
+            print(f"⚠️  String Response Detected: {llm_response[:100]}")
+            # Try to extract function call dari string
+            if "function_call" in llm_response or "request_service" in llm_response or "alert_caregiver" in llm_response or "request_assistance" in llm_response:
+                # Extract function name
+                if "request_service" in llm_response:
+                    message = self._get_confirmation_message("request_service", {"service_type": "drink", "details": ""})
+                    response_type = "action"
+                elif "alert_caregiver" in llm_response:
+                    message = self._get_confirmation_message("alert_caregiver", {})
+                    response_type = "action"
+                elif "request_assistance" in llm_response:
+                    message = self._get_confirmation_message("request_assistance", {"assistance_type": "general", "urgency": "normal"})
+                    response_type = "action"
+                else:
+                    message = llm_response
+            else:
+                message = llm_response
+        
+        # Check if response has "content" key (normal conversation)
+        elif isinstance(llm_response, dict) and llm_response.get("content"):
             message = llm_response.get("content", "")
-            if not message:
-                message = f"Maaf {self.preferred_name}, saya kurang mengerti. Bisa diulang?"
+            
+            # Double-check jika content mengandung function call string
+            if message and ("function_call" in message or "request_service" in message):
+                print(f"⚠️  Function call dalam content string: {message[:100]}")
+                # Use default confirmation message untuk drink request
+                if "request_service" in message or "drink" in message.lower():
+                    message = self._get_confirmation_message("request_service", {"service_type": "drink", "details": ""})
+                    response_type = "action"
+        else:
+            message = ""
+        
+        # Fallback jika message masih kosong
+        if not message or not isinstance(message, str) or message.startswith("function") or "function_call" in message:
+            print(f"⚠️  Warning: Message is empty or invalid: {message}")
+            message = "Maaf saya kurang mengerti"
         
         # Update history
         history.append({"role": "user", "content": text})
@@ -285,6 +331,18 @@ class MochiAPI:
             confidence=result.confidence,
             duration_ms=result.duration_ms
         )
+    
+    async def generate_audio_bytes(self, text: str) -> bytes:
+        """Generate audio bytes dari text tanpa menyimpan ke disk"""
+        clean_message = self._clean_for_tts(text)
+        return await self.tts.generate_bytes(clean_message)
+    
+    async def generate_audio_file(self, text: str) -> str:
+        """Generate audio dan save ke file, return URL"""
+        clean_message = self._clean_for_tts(text)
+        audio_path = await self.tts.generate(clean_message)
+        audio_filename = Path(audio_path).name
+        return f"/api/audio/{audio_filename}"
 
 
 # ============================================================
@@ -410,28 +468,35 @@ def create_app(
         )
     
     @app.post("/api/process-audio", response_model=ChatResponse)
-    async def process_audio(file: UploadFile = File(...), user_id: str = "user_001"):
+    async def process_audio(request: Request, user_id: str = "user_001"):
         """
-        Full pipeline: Audio -> STT -> LLM -> TTS
+        Full pipeline: Audio Stream -> STT -> LLM -> TTS
         
-        Accepts: WAV file
-        Returns: Chat response with audio URL
+        Accepts: Binary audio stream (application/octet-stream)
+        Returns: JSON response dengan audio URL
         """
         if not mochi_api:
             raise HTTPException(status_code=503, detail="Server belum siap")
         
-        # 1. Read and transcribe audio
-        audio_bytes = await file.read()
-        transcription = await mochi_api.transcribe_audio(audio_bytes)
+        # 1. Read binary audio stream
+        audio_bytes = await request.body()
+        if not audio_bytes:
+            raise HTTPException(status_code=400, detail="Audio stream tidak ditemukan")
         
+        # 2. Transcribe audio
+        transcription = await mochi_api.transcribe_audio(audio_bytes)
         print(f"📝 Transcription: {transcription.text}")
         
-        # 2. Process with LLM
+        # 3. Process with LLM
         response = await mochi_api.process_text(
             text=transcription.text,
             user_id=user_id,
-            generate_audio=True
+            generate_audio=False
         )
+        
+        # 4. Generate audio file dan get URL
+        audio_url = await mochi_api.generate_audio_file(response.message)
+        response.audio_url = audio_url
         
         return response
     
