@@ -1,5 +1,5 @@
 # Multi-stage build untuk mengoptimalkan ukuran image
-FROM python:3.11-slim AS builder
+FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
@@ -26,7 +26,7 @@ RUN mkdir -p /app/models && \
     local_dir='/app/models')"
 
 # Final stage
-FROM python:3.11-slim AS runtime
+FROM python:3.12-slim AS runtime
 
 WORKDIR /app
 
