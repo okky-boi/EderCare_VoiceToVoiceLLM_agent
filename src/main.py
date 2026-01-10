@@ -34,8 +34,9 @@ from prompts.system_prompts import SYSTEM_PROMPT_ID, TOOLS_DEFINITION
 class MochiConfig:
     """Konfigurasi Mochi Bot"""
     # Paths - sesuaikan dengan lokasi Anda
-    project_dir: str = r"D:\coding\SIC\Final"
-    model_path: str = r"D:\coding\SIC\Final\models\qwen2.5-1.5b-instruct-q4_k_m.gguf"  # Model ringan untuk CPU
+    project_dir: str = r"D:\Lomba\SIC 7\EderCare_VoiceToVoiceLLM_agent"
+    model_path: str = r"D:\Lomba\SIC 7\EderCare_VoiceToVoiceLLM_agent\models\qwen2.5-1.5b-instruct-q4_k_m.gguf" 
+    # Model ringan untuk CPU
     
     # User settings
     user_name: str = "Nenek Sari"
