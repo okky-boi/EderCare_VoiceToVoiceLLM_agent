@@ -33,9 +33,9 @@ from prompts.system_prompts import SYSTEM_PROMPT_ID, TOOLS_DEFINITION
 @dataclass
 class MochiConfig:
     """Konfigurasi Mochi Bot"""
-    # Paths - sesuaikan dengan lokasi Anda
-    project_dir: str = r"D:\Lomba\SIC 7\EderCare_VoiceToVoiceLLM_agent"
-    model_path: str = r"D:\Lomba\SIC 7\EderCare_VoiceToVoiceLLM_agent\models\qwen2.5-1.5b-instruct-q4_k_m.gguf" 
+    # Paths - menggunakan relative paths untuk portability
+    project_dir: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    model_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "models", "qwen2.5-1.5b-instruct-q4_k_m.gguf")
     # Model ringan untuk CPU
     
     # User settings
@@ -59,8 +59,8 @@ class MochiConfig:
     stt_compute_type: str = "int8"  # int8 lebih cepat di CPU
     
     # Server settings
-    server_host: str = "0.0.0.0"
-    server_port: int = 8000
+    server_host: str = "127.0.0.1"
+    server_port: int = 8051
 
 
 # ============================================================
