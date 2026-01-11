@@ -207,6 +207,31 @@ class MochiAPI:
         )
         return emoji_pattern.sub('', text).strip()
     
+    def _clean_function_artifacts(self, text: str) -> str:
+        """
+        Bersihkan sisa-sisa function call syntax dari respons.
+        Model kecil kadang mencampur respons dengan function syntax.
+        """
+        import re
+        
+        # Pattern untuk function call artifacts
+        patterns_to_remove = [
+            r'functions?\.(alert_caregiver|request_service|request_assistance)[:\s]*',
+            r'<function[=\s]*(alert_caregiver|request_service|request_assistance)[^>]*>',
+            r'</?tool_call>',
+            r'</?function>',
+            r'\{["\']?name["\']?\s*:\s*["\']?(alert_caregiver|request_service|request_assistance)["\']?[^}]*\}',
+        ]
+        
+        cleaned = text
+        for pattern in patterns_to_remove:
+            cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+        
+        # Bersihkan whitespace berlebih
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        
+        return cleaned
+    
     async def process_text(self, text: str, user_id: str, generate_audio: bool = True) -> ChatResponse:
         """Process text input dan generate response"""
         start_time = time.time()
@@ -223,7 +248,7 @@ class MochiAPI:
         messages.extend(history[-6:])
         messages.append({"role": "user", "content": text})
         
-        # Call LLM
+        # Call LLM - llm_processor sudah handle parsing function call (termasuk malformed)
         llm_response = self.llm.generate(
             messages=messages,
             tools=TOOLS_DEFINITION,
@@ -232,20 +257,20 @@ class MochiAPI:
         )
         
         print(f"🤖 Raw LLM Response: {llm_response}")
-        print(f"🤖 Response Type: {type(llm_response)}")
         
-        # Parse response
+        # Parse response - llm_processor mengembalikan dict dengan keys: content, function_call
         response_type = "conversation"
         function_call = None
         message = ""
         
-        # Check if response contains function_call (dict format)
-        if isinstance(llm_response, dict) and llm_response.get("function_call"):
+        # LLM processor sudah parse function_call dengan benar (termasuk fallback untuk malformed)
+        if llm_response.get("function_call"):
             func_name = llm_response["function_call"]["name"]
             func_args = llm_response["function_call"]["arguments"]
             
-            print(f"📞 Function Call Detected (dict): {func_name}")
+            print(f"📞 Function Call Detected: {func_name}, Args: {func_args}")
             
+            # Generate confirmation message berdasarkan function dan arguments yang sebenarnya
             message = self._get_confirmation_message(func_name, func_args)
             response_type = "action"
             function_call = {
@@ -256,44 +281,17 @@ class MochiAPI:
             # Dispatch action
             self.dispatcher.dispatch(function_call)
         
-        # Check if response is string dan mengandung function call notation
-        elif isinstance(llm_response, str):
-            print(f"⚠️  String Response Detected: {llm_response[:100]}")
-            # Try to extract function call dari string
-            if "function_call" in llm_response or "request_service" in llm_response or "alert_caregiver" in llm_response or "request_assistance" in llm_response:
-                # Extract function name
-                if "request_service" in llm_response:
-                    message = self._get_confirmation_message("request_service", {"service_type": "drink", "details": ""})
-                    response_type = "action"
-                elif "alert_caregiver" in llm_response:
-                    message = self._get_confirmation_message("alert_caregiver", {})
-                    response_type = "action"
-                elif "request_assistance" in llm_response:
-                    message = self._get_confirmation_message("request_assistance", {"assistance_type": "general", "urgency": "normal"})
-                    response_type = "action"
-                else:
-                    message = llm_response
-            else:
-                message = llm_response
-        
-        # Check if response has "content" key (normal conversation)
-        elif isinstance(llm_response, dict) and llm_response.get("content"):
+        # Normal conversation response
+        else:
             message = llm_response.get("content", "")
             
-            # Double-check jika content mengandung function call string
-            if message and ("function_call" in message or "request_service" in message):
-                print(f"⚠️  Function call dalam content string: {message[:100]}")
-                # Use default confirmation message untuk drink request
-                if "request_service" in message or "drink" in message.lower():
-                    message = self._get_confirmation_message("request_service", {"service_type": "drink", "details": ""})
-                    response_type = "action"
-        else:
-            message = ""
+            # Bersihkan jika masih ada sisa function syntax
+            if message:
+                message = self._clean_function_artifacts(message)
         
-        # Fallback jika message masih kosong
-        if not message or not isinstance(message, str) or message.startswith("function") or "function_call" in message:
-            print(f"⚠️  Warning: Message is empty or invalid: {message}")
-            message = "Maaf saya kurang mengerti"
+        # Fallback jika message kosong
+        if not message:
+            message = f"Maaf {self.preferred_name}, saya kurang mengerti. Bisa diulang?"
         
         # Update history
         history.append({"role": "user", "content": text})
