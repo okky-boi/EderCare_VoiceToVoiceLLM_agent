@@ -34,8 +34,8 @@ from prompts.system_prompts import SYSTEM_PROMPT_ID, TOOLS_DEFINITION
 class MochiConfig:
     """Konfigurasi Mochi Bot"""
     # Paths - sesuaikan dengan lokasi Anda
-    project_dir: str = r"D:\Lomba\SIC 7\EderCare_VoiceToVoiceLLM_agent"
-    model_path: str = r"D:\Lomba\SIC 7\EderCare_VoiceToVoiceLLM_agent\models\qwen2.5-1.5b-instruct-q4_k_m.gguf" 
+    project_dir: str = r"D:\coding\SIC\Final"
+    model_path: str = r"D:\coding\SIC\Final\models\qwen2.5-1.5b-instruct-q4_k_m.gguf" 
     # Model ringan untuk CPU
     
     # User settings
@@ -242,6 +242,11 @@ class MochiBot:
             
         else:
             content = llm_response.get("content", "")
+            
+            # Clean up jika content masih mengandung sisa function call syntax
+            if content:
+                content = self._clean_function_artifacts(content)
+            
             if not content:
                 content = f"Maaf {self.config.preferred_name}, saya kurang mengerti. Bisa diulang?"
             
@@ -281,6 +286,31 @@ class MochiBot:
             flags=re.UNICODE
         )
         return emoji_pattern.sub('', text).strip()
+    
+    def _clean_function_artifacts(self, text: str) -> str:
+        """
+        Bersihkan sisa-sisa function call syntax dari respons.
+        Model kecil kadang mencampur respons dengan function syntax.
+        """
+        import re
+        
+        # Pattern untuk function call artifacts
+        patterns_to_remove = [
+            r'functions?\.(alert_caregiver|request_service|request_assistance)[:\s]*',
+            r'<function[=\s]*(alert_caregiver|request_service|request_assistance)[^>]*>',
+            r'</?tool_call>',
+            r'</?function>',
+            r'\{["\']?name["\']?\s*:\s*["\']?(alert_caregiver|request_service|request_assistance)["\']?[^}]*\}',
+        ]
+        
+        cleaned = text
+        for pattern in patterns_to_remove:
+            cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+        
+        # Bersihkan whitespace berlebih
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        
+        return cleaned
     
     def clear_history(self):
         """Clear conversation history"""
