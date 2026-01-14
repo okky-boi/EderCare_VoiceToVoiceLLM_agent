@@ -87,6 +87,9 @@ class MochiLLM:
             "function_call":  None
         }
         
+        # Log untuk debugging
+        print(f"🧠 LLM Raw Output - Content: '{result['content'][:100]}...' " if len(result['content']) > 100 else f"🧠 LLM Raw Output - Content: '{result['content']}'")
+        
         # Check for function call from tool_calls
         if "tool_calls" in message and message["tool_calls"]: 
             tool_call = message["tool_calls"][0]
@@ -94,14 +97,20 @@ class MochiLLM:
                 "name": tool_call["function"]["name"],
                 "arguments": json.loads(tool_call["function"]["arguments"])
             }
+            print(f"✅ Proper tool_call detected: {result['function_call']['name']}")
         
         # FALLBACK: Parse function call dari content jika model salah format
         # Model kecil kadang mengeluarkan "functions.request_service:" sebagai teks
         if result["function_call"] is None and result["content"]:
+            print(f"⚠️ No tool_call, checking for malformed function in content...")
+            print(f"   User message context: '{user_message[:80]}...'" if len(user_message) > 80 else f"   User message context: '{user_message}'")
             parsed = self._parse_malformed_function_call(result["content"], user_message)
             if parsed:
+                print(f"✅ Parsed malformed function: {parsed['name']} with args: {parsed['arguments']}")
                 result["function_call"] = parsed
                 result["content"] = ""  # Clear content karena ini sebenarnya function call
+            else:
+                print(f"ℹ️ No function call detected, treating as conversation")
         
         return result
     

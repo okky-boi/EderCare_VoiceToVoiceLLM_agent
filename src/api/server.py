@@ -320,8 +320,46 @@ class MochiAPI:
         )
     
     async def transcribe_audio(self, audio_bytes: bytes) -> TranscribeResponse:
-        """Transcribe audio bytes ke text"""
-        result = self.stt.transcribe_bytes(audio_bytes)
+        """
+        Transcribe audio bytes ke text
+        Mendukung: raw PCM (dari ESP32), WAV, dan format lain
+        """
+        import io
+        import wave
+        
+        print(f"📥 Received audio: {len(audio_bytes)} bytes")
+        
+        # Deteksi format audio
+        audio_to_process = audio_bytes
+        
+        # Cek apakah WAV file (header: RIFF....WAVE)
+        if len(audio_bytes) > 12 and audio_bytes[:4] == b'RIFF' and audio_bytes[8:12] == b'WAVE':
+            print("🎵 Detected WAV format")
+            try:
+                wav_io = io.BytesIO(audio_bytes)
+                with wave.open(wav_io, 'rb') as wav_file:
+                    n_channels = wav_file.getnchannels()
+                    sample_width = wav_file.getsampwidth()
+                    frame_rate = wav_file.getframerate()
+                    n_frames = wav_file.getnframes()
+                    audio_to_process = wav_file.readframes(n_frames)
+                    print(f"   Channels: {n_channels}, Width: {sample_width}, Rate: {frame_rate}, Frames: {n_frames}")
+            except Exception as e:
+                print(f"⚠️ WAV parse error: {e}, using raw bytes")
+        else:
+            print("🎵 Detected raw PCM format (from ESP32)")
+            # Log beberapa byte pertama untuk debugging
+            if len(audio_bytes) >= 20:
+                print(f"   First 20 bytes (hex): {audio_bytes[:20].hex()}")
+            # Estimasi durasi: bytes / (sample_rate * 2 bytes per sample)
+            estimated_duration = len(audio_bytes) / (16000 * 2)
+            print(f"   Estimated duration: {estimated_duration:.2f}s")
+        
+        # Transcribe
+        result = self.stt.transcribe_bytes(audio_to_process)
+        
+        # Log hasil transcription untuk debugging
+        print(f"📝 STT Result: '{result.text}' (confidence: {result.confidence:.3f}, lang: {result.language})")
         
         return TranscribeResponse(
             text=result.text,
@@ -470,7 +508,7 @@ def create_app(
         """
         Full pipeline: Audio Stream -> STT -> LLM -> TTS
         
-        Accepts: Binary audio stream (application/octet-stream)
+        Accepts: Binary audio stream (application/octet-stream) atau WAV
         Returns: JSON response dengan audio URL
         """
         if not mochi_api:
@@ -478,12 +516,25 @@ def create_app(
         
         # 1. Read binary audio stream
         audio_bytes = await request.body()
+        
+        # Log request info untuk debugging IoT
+        content_type = request.headers.get("content-type", "not-specified")
+        print(f"\n{'='*50}")
+        print(f"🔊 IoT REQUEST RECEIVED")
+        print(f"{'='*50}")
+        print(f"   Content-Type: {content_type}")
+        print(f"   Audio size: {len(audio_bytes)} bytes")
+        print(f"   User ID: {user_id}")
+        
         if not audio_bytes:
             raise HTTPException(status_code=400, detail="Audio stream tidak ditemukan")
         
+        if len(audio_bytes) < 1000:
+            print(f"⚠️ Warning: Audio sangat pendek ({len(audio_bytes)} bytes)")
+        
         # 2. Transcribe audio
         transcription = await mochi_api.transcribe_audio(audio_bytes)
-        print(f"📝 Transcription: {transcription.text}")
+        print(f"\n🎤 USER SAID: '{transcription.text}'")
         
         # 3. Process with LLM
         response = await mochi_api.process_text(
@@ -492,9 +543,17 @@ def create_app(
             generate_audio=False
         )
         
+        print(f"🤖 MOCHI RESPONSE: '{response.message}'")
+        print(f"   Response Type: {response.response_type}")
+        if response.function_call:
+            print(f"   Function Call: {response.function_call}")
+        
         # 4. Generate audio file dan get URL
         audio_url = await mochi_api.generate_audio_file(response.message)
         response.audio_url = audio_url
+        
+        print(f"   Audio URL: {audio_url}")
+        print(f"{'='*50}\n")
         
         return response
     
