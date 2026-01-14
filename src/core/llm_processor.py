@@ -80,10 +80,17 @@ class MochiLLM:
             max_tokens=max_tokens
         )
         
-        message = response["choices"][0]["message"]
+        try:
+            message = response["choices"][0]["message"]
+        except (KeyError, IndexError) as e:
+            print(f"❌ Error parsing LLM response: {e}")
+            return {
+                "content": "Error memproses response LLM",
+                "function_call": None
+            }
         
         result = {
-            "content": message.get("content", ""),
+            "content": message.get("content", "") or "",
             "function_call":  None
         }
         
@@ -93,11 +100,15 @@ class MochiLLM:
         # Check for function call from tool_calls
         if "tool_calls" in message and message["tool_calls"]: 
             tool_call = message["tool_calls"][0]
-            result["function_call"] = {
-                "name": tool_call["function"]["name"],
-                "arguments": json.loads(tool_call["function"]["arguments"])
-            }
-            print(f"✅ Proper tool_call detected: {result['function_call']['name']}")
+            try:
+                result["function_call"] = {
+                    "name": tool_call["function"]["name"],
+                    "arguments": json.loads(tool_call["function"]["arguments"])
+                }
+                print(f"✅ Proper tool_call detected: {result['function_call']['name']}")
+            except (json.JSONDecodeError, KeyError) as e:
+                print(f"❌ Error parsing tool_call: {e}")
+                result["function_call"] = None
         
         # FALLBACK: Parse function call dari content jika model salah format
         # Model kecil kadang mengeluarkan "functions.request_service:" sebagai teks
